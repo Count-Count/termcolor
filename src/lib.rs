@@ -358,6 +358,17 @@ impl io::Write for IoStandardStream {
         }
     }
 
+    #[cfg(windows)]
+    #[inline(always)]
+    fn write_all(&mut self, b: &[u8]) -> io::Result<()> {
+        match *self {
+            IoStandardStream::Stdout(ref mut s) => s.write_all(b),
+            IoStandardStream::Stderr(ref mut s) => s.write_all(b),
+            IoStandardStream::StdoutBuffered(ref mut s) => s.write_all(b),
+            IoStandardStream::StderrBuffered(ref mut s) => s.write_all(b),
+        }
+    }
+
     #[inline(always)]
     fn flush(&mut self) -> io::Result<()> {
         match *self {
@@ -382,6 +393,15 @@ impl<'a> io::Write for IoStandardStreamLock<'a> {
         match *self {
             IoStandardStreamLock::StdoutLock(ref mut s) => s.write(b),
             IoStandardStreamLock::StderrLock(ref mut s) => s.write(b),
+        }
+    }
+
+    #[cfg(windows)]
+    #[inline(always)]
+    fn write_all(&mut self, b: &[u8]) -> io::Result<()> {
+        match *self {
+            IoStandardStreamLock::StdoutLock(ref mut s) => s.write_all(b),
+            IoStandardStreamLock::StderrLock(ref mut s) => s.write_all(b),
         }
     }
 
@@ -2049,6 +2069,11 @@ impl<W: io::Write> io::Write for LossyStandardStream<W> {
         }
     }
 
+    #[cfg(windows)]
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        write_all_lossy_utf8(&mut self.wtr, buf)
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         self.wtr.flush()
     }
@@ -2064,6 +2089,29 @@ fn write_lossy_utf8<W: io::Write>(mut w: W, buf: &[u8]) -> io::Result<usize> {
         }
         Err(e) => w.write(&buf[..e.valid_up_to()]),
     }
+}
+
+#[cfg(windows)]
+fn write_all_lossy_utf8<W: io::Write>(
+    mut w: W,
+    mut buf: &[u8],
+) -> io::Result<()> {
+    while !buf.is_empty() {
+        match ::std::str::from_utf8(buf) {
+            Ok(s) => {
+                return w.write_all(s.as_bytes());
+            }
+            Err(ref e) if e.valid_up_to() == 0 => {
+                w.write_all(b"\xEF\xBF\xBD")?;
+                buf = &buf[1..];
+            }
+            Err(e) => {
+                w.write_all(&buf[..e.valid_up_to()])?;
+                buf = &buf[e.valid_up_to()..];
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
